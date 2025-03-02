@@ -1032,7 +1032,7 @@ function updateSVGDefs() {
     const svgContainer = document.getElementById('svgContainer');
     const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
 
-    // 創建箭頭標記
+    // 修改箭頭標記以在觸碰裝置上正確顯示
     const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
     marker.setAttribute("id", "arrow");
     marker.setAttribute("viewBox", "0 0 10 10");
@@ -1041,11 +1041,13 @@ function updateSVGDefs() {
     marker.setAttribute("refX", "8");
     marker.setAttribute("refY", "5");
     marker.setAttribute("orient", "auto-start-reverse");
+    marker.setAttribute("markerUnits", "userSpaceOnUse"); // 新增：確保在觸碰裝置上顯示
 
     // 創建箭頭路徑
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
     path.setAttribute("fill", "#2563eb");
+    path.setAttribute("stroke", "none"); // 新增：確保沒有描邊干擾顯示
     marker.appendChild(path);
     defs.appendChild(marker);
 
@@ -1262,18 +1264,16 @@ function updateConceptsAndConnectors() {
     });
 }
 
-// 修改章節選擇事件處理，在切換章節時同步畫布上的項目
-// 修改章節選擇事件處理，在切換章節時同步畫布上的項目
+// 整合後的 DOMContentLoaded 事件處理
 document.addEventListener('DOMContentLoaded', function() {
     // 初始化 SVG 定義
     updateSVGDefs();
     
-    // 添加觸控樣式支援
-    addTouchSupport();
-    
-    // 現有的代碼保持不變
+    // 添加畫布點擊事件監聽器
     document.querySelector('.canvas-container').addEventListener('click', function(e) {
+        // 確保點擊的是畫布容器本身，而不是其子元素
         if (e.target === this || e.target.id === 'canvas' || e.target.id === 'svgContainer') {
+            // 取消節點選取
             if (selectedNodes.length > 0) {
                 selectedNodes.forEach(node => {
                     node.classList.remove('selected');
@@ -1281,6 +1281,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 selectedNodes = [];
             }
             
+            // 取消連接線選取並隱藏控制點
             if (selectedConnection) {
                 selectedConnection.path.classList.remove('selected');
                 selectedConnection.textElement.classList.remove('selected');
@@ -1291,10 +1292,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
+    // 添加整個文檔的點擊事件監聽器（用於處理說明面板）
     document.addEventListener('click', function(e) {
         const panel = document.getElementById('instructionsPanel');
         const button = document.querySelector('.help-button');
         
+        // 如果點擊的不是面板或按鈕，並且面板正在顯示，則隱藏面板
         if (!panel.contains(e.target) && 
             !button.contains(e.target) && 
             panel.classList.contains('show')) {
@@ -1302,6 +1305,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
+    // 添加鍵盤事件監聽器
     document.addEventListener('keydown', function(e) {
         if (e.ctrlKey && e.key === 'z') {
             e.preventDefault();
@@ -1314,19 +1318,59 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
+    // 註冊視窗調整大小事件
     window.addEventListener('resize', updateConnections);
+    
+    // 為章節選擇添加事件處理
+    const chapterSelect = document.getElementById('chapter');
+    if (chapterSelect) {
+        chapterSelect.addEventListener('change', function() {
+            // 在更新概念和連接詞前，將當前畫布的內容保存到之前的章節
+            const previousChapter = this.dataset.previousChapter;
+            if (previousChapter && globalData && globalData.chapterData) {
+                if (!globalData.chapterData[previousChapter]) {
+                    globalData.chapterData[previousChapter] = {
+                        concepts: [],
+                        connectors: []
+                    };
+                }
+                
+                // 收集當前畫布上的所有概念和連接詞
+                concepts.forEach(node => {
+                    const nodeText = node.childNodes[0].nodeType === Node.TEXT_NODE
+                        ? node.childNodes[0].textContent
+                        : node.textContent;
+                    
+                    if (nodeText && !globalData.chapterData[previousChapter].concepts.includes(nodeText)) {
+                        globalData.chapterData[previousChapter].concepts.push(nodeText);
+                    }
+                });
+                
+                connections.forEach(conn => {
+                    const connText = conn.textElement.textContent;
+                    if (connText && !globalData.chapterData[previousChapter].connectors.includes(connText)) {
+                        globalData.chapterData[previousChapter].connectors.push(connText);
+                    }
+                });
+            }
+            
+            // 更新概念和連接詞
+            updateConceptsAndConnectors();
+            
+            // 保存當前章節，用於下次切換
+            this.dataset.previousChapter = this.value;
+        });
+        
+        // 初始化 previousChapter
+        chapterSelect.dataset.previousChapter = chapterSelect.value;
+    }
     
     // 保存初始狀態
     saveState();
     
-    // 延遲增強現有連接線，確保它們已被載入
-    setTimeout(enhanceExistingConnectors, 1000);
-}); // 這裡應該是右括號，而不是分號
-
-
-
-
-
+    // 初始化觸碰裝置支援
+    initTouchDeviceSupport();
+});
 
 // 修改 handleConceptSelect 函數，確保新概念被添加到全局數據
 function handleConceptSelect(value) {
@@ -1713,8 +1757,7 @@ function toggleSelect(e) {
 
 // 創建連接
 // 修改 createConnection 函數，添加控制點偏移量參數
-
-const originalCreateConnection = createConnection;
+// 修改 createConnection 函數，改變變數名稱避免衝突
 function createConnection(from, to, connectionText = '關係', connectionType, control1Offset = null, control2Offset = null) {
     // 獲取 SVG 容器，如果不存在則創建
     let svgContainer = document.getElementById('svgContainer');
@@ -1731,7 +1774,7 @@ function createConnection(from, to, connectionText = '關係', connectionType, c
     path.classList.add('connection-path');
     svgContainer.appendChild(path);
     
-    // 創建文字元素 - 使用不同變數名避免衝突
+    // 創建文字元素
     const lineTextElement = document.createElement('div');
     lineTextElement.className = 'connector-text';
     lineTextElement.textContent = connectionText;
@@ -1742,6 +1785,9 @@ function createConnection(from, to, connectionText = '關係', connectionType, c
         e.stopPropagation();
         makeLineTextEditable(this);
     });
+    
+    // 添加這一行：為觸碰裝置添加雙輕觸支援
+    enhanceTextElementForTouch(lineTextElement);
 
     // 創建控制點
     const controlPoint1 = document.createElement('div');
@@ -1815,22 +1861,57 @@ function setupControlPointDrag(controlPoint, connection, isFirstControl) {
     let startX, startY;
     let originalOffset;
 
-    controlPoint.addEventListener('mousedown', e => {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        originalOffset = isFirstControl ? {...connection.control1Offset} : {...connection.control2Offset};
-        
+    // 開始拖曳的事件處理器
+    function startDrag(e) {
         e.preventDefault();
         e.stopPropagation();
-    });
+        
+        isDragging = true;
+        
+        // 處理不同類型的事件
+        if (e.type === 'mousedown' || e.type === 'pointerdown') {
+            startX = e.clientX;
+            startY = e.clientY;
+        } else if (e.type === 'touchstart') {
+            const touch = e.touches[0];
+            startX = touch.clientX;
+            startY = touch.clientY;
+        }
+        
+        originalOffset = isFirstControl ? {...connection.control1Offset} : {...connection.control2Offset};
+        
+        // 添加移動和結束事件監聽器
+        if (window.PointerEvent) {
+            document.addEventListener('pointermove', moveDrag);
+            document.addEventListener('pointerup', stopDrag);
+        } else {
+            document.addEventListener('mousemove', moveDrag);
+            document.addEventListener('mouseup', stopDrag);
+            document.addEventListener('touchmove', moveDrag, { passive: false });
+            document.addEventListener('touchend', stopDrag);
+        }
+    }
 
-    document.addEventListener('mousemove', e => {
+    // 拖曳移動的事件處理器
+    function moveDrag(e) {
         if (!isDragging) return;
-
-        const dx = e.clientX - startX;
-        const dy = e.clientY - startY;
-
+        
+        e.preventDefault();
+        
+        let clientX, clientY;
+        
+        if (e.type === 'mousemove' || e.type === 'pointermove') {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        } else if (e.type === 'touchmove') {
+            const touch = e.touches[0];
+            clientX = touch.clientX;
+            clientY = touch.clientY;
+        }
+        
+        const dx = clientX - startX;
+        const dy = clientY - startY;
+        
         if (isFirstControl) {
             connection.control1Offset.x = originalOffset.x + dx;
             connection.control1Offset.y = originalOffset.y + dy;
@@ -1838,16 +1919,105 @@ function setupControlPointDrag(controlPoint, connection, isFirstControl) {
             connection.control2Offset.x = originalOffset.x + dx;
             connection.control2Offset.y = originalOffset.y + dy;
         }
-
+        
         updateConnections();
-    });
+    }
 
-    document.addEventListener('mouseup', () => {
+    // 停止拖曳的事件處理器
+    function stopDrag() {
+        if (!isDragging) return;
+        
         isDragging = false;
-    });
+        
+        // 移除事件監聽器
+        if (window.PointerEvent) {
+            document.removeEventListener('pointermove', moveDrag);
+            document.removeEventListener('pointerup', stopDrag);
+        } else {
+            document.removeEventListener('mousemove', moveDrag);
+            document.removeEventListener('mouseup', stopDrag);
+            document.removeEventListener('touchmove', moveDrag);
+            document.removeEventListener('touchend', stopDrag);
+        }
+        
+        // 保存狀態
+        saveState();
+    }
+    
+    // 綁定事件監聽器
+    if (window.PointerEvent) {
+        controlPoint.addEventListener('pointerdown', startDrag);
+    } else {
+        controlPoint.addEventListener('mousedown', startDrag);
+        controlPoint.addEventListener('touchstart', startDrag, { passive: false });
+    }
 }
 
-    function moveControlPoint(e) {
+
+function enhanceTextElementForTouch(textElement) {
+    let lastTap = 0;
+    let tapTimeout;
+    
+    // 處理點擊/觸碰事件
+    function handleTap(e) {
+        // 處理觸碰事件
+        if (e.type === 'touchstart') {
+            e.preventDefault(); // 防止觸發模擬點擊事件
+            
+            const currentTime = new Date().getTime();
+            const tapLength = currentTime - lastTap;
+            
+            clearTimeout(tapTimeout);
+            
+            if (tapLength < 500 && tapLength > 0) {
+                // 雙輕觸事件 - 進入編輯模式
+                makeLineTextEditable(textElement);
+                lastTap = 0;
+            } else {
+                // 單輕觸 - 等待可能的第二次輕觸
+                lastTap = currentTime;
+                
+                // 設置一個超時以處理單輕觸事件
+                tapTimeout = setTimeout(function() {
+                    // 在這裡處理單輕觸邏輯，通常是選擇連接線
+                    const event = new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    textElement.dispatchEvent(event);
+                    lastTap = 0;
+                }, 300);
+            }
+        }
+    }
+    
+    // 只在非觸碰事件已經綁定的情況下添加觸碰事件處理
+    textElement.addEventListener('touchstart', handleTap, { passive: false });
+}
+
+
+function initTouchDeviceSupport() {
+    console.log("初始化觸碰裝置支援...");
+    
+    // 1. 更新 SVG 定義，確保箭頭顯示正常
+    updateSVGDefs();
+    
+    // 2. 為現有的連接文字添加觸碰支援
+    document.querySelectorAll('.connector-text').forEach(textElement => {
+        enhanceTextElementForTouch(textElement);
+    });
+    
+    // 3. 更新現有連接線以確保樣式正確
+    connections.forEach(conn => {
+        updateConnectionStyle(conn);
+    });
+    
+    console.log("觸碰裝置支援初始化完成");
+}
+
+
+function moveControlPoint(e) {
         if (!isDragging) return;
         e.preventDefault();
         
@@ -1875,9 +2045,9 @@ function setupControlPointDrag(controlPoint, connection, isFirstControl) {
 
         // 更新連接線
         updateConnections();
-    }
+}
 
-    function stopControlPointDrag() {
+function stopControlPointDrag() {
         if (!isDragging) return;
         isDragging = false;
 
@@ -2320,51 +2490,6 @@ function undo() {
     
     updateConnections();
 }
-
-function addTouchSupport() {
-    // 添加觸控裝置專用的CSS樣式
-    const styleElement = document.createElement('style');
-    styleElement.textContent = `
-        /* 增加控制點大小，方便觸摸 */
-        @media (hover: none) and (pointer: coarse) {
-            .control-point {
-                width: 20px !important;
-                height: 20px !important;
-                background: #2196f3 !important;
-                border: 2px solid white !important;
-                transform: translate(-50%, -50%);
-            }
-            
-            /* 增加連接詞標籤的可觸摸區域 */
-            .connector-text {
-                padding: 4px 8px !important;
-                min-width: 30px !important;
-            }
-        }
-    `;
-    document.head.appendChild(styleElement);
-}
-
-const enhanceExistingConnectors = function() {
-    connections.forEach(conn => {
-        if (conn.textElement) {
-            // 添加觸控雙擊支援
-            let lastTap = 0;
-            conn.textElement.addEventListener('touchend', function(e) {
-                const currentTime = new Date().getTime();
-                const tapLength = currentTime - lastTap;
-                
-                if (tapLength < 500 && tapLength > 0) {
-                    // 檢測到雙擊，進入編輯模式
-                    e.preventDefault();
-                    makeLineTextEditable(this);
-                }
-                
-                lastTap = currentTime;
-            });
-        }
-    });
-};
 
 // 刪除選取的元素
 
@@ -3194,6 +3319,7 @@ function restoreNodesListener() {
             }
         });
     }
+	initTouchDeviceSupport();
 }
 
 // 清空畫布的函數
